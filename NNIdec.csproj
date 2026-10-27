@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net6.0;net8.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <Authors>Ismail Lowkey</Authors>
+    <Company>NN</Company>
+    <Product>NNIdec</Product>
+    <Description>High-performance C# library for communicating with IDEC PLCs (Micro, MicroSmart FC4A/FC5A, and MicroSmart FC6A Series) over Ethernet TCP and Serial.</Description>
+    <PackageTags>idec;plc;microsmart;fc6a;fc5a;fc4a;communication;industrial-automation</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="NNIdec.Tests\**" />
+    <EmbeddedResource Remove="NNIdec.Tests\**" />
+    <None Remove="NNIdec.Tests\**" />
+  </ItemGroup>
+
+</Project>
