@@ -19,6 +19,7 @@ Tested and verified directly with physical **IDEC MicroSmart FC6A** hardware, it
   - [3. Connecting via Modbus TCP (Port 502)](#3-connecting-via-modbus-tcp-port-502)
 - [📑 Memory Device Addressing Reference](#-memory-device-addressing-reference)
 - [🔄 Supported Data Types & Endianness](#-supported-data-types--endianness)
+- [🔁 Auto Reconnect](#-auto-reconnect)
 - [🏃 Running the Example Project](#-running-the-example-project)
 - [📦 Compatibility](#-compatibility)
 - [📄 License](#-license)
@@ -58,6 +59,8 @@ Tested and verified directly with physical **IDEC MicroSmart FC6A** hardware, it
   - Every operation has a native asynchronous counterpart (`ReadInt16Async`, `ReadBoolAsync`, `WriteStringAsync`, etc.).
 - **Configurable Endianness**:
   - Supports `CDAB` (default for Modbus/IDEC), `ABCD` (Big-Endian), `BADC`, and `DCBA`.
+- **Auto Reconnect**:
+  - When `AutoReconnect = true` (default), the client automatically reconnects if the network connection drops and retries the failed request once.
 
 ---
 
@@ -223,6 +226,20 @@ NNIdec supports configurable byte ordering (endianness) for 32-bit and 64-bit da
 ```csharp
 plc.ByteOrder = EndianFormat.CDAB; // Default IDEC & Modbus standard
 // Other supported formats: EndianFormat.ABCD, EndianFormat.BADC, EndianFormat.DCBA
+```
+
+---
+
+## 🔁 Auto Reconnect
+
+`AutoReconnect` is enabled by default. If the network cable is unplugged or the PLC restarts, the next read/write call will automatically reconnect and retry the request once.
+
+```csharp
+// Via constructor parameter
+var plc = new IdecMicroSmartFC6A("192.168.2.36", port: 2101, stationId: 0, autoReconnect: true);
+
+// Or via property
+plc.AutoReconnect = false; // Disable: operations fail immediately when disconnected (error code -106)
 ```
 
 ---

@@ -53,6 +53,16 @@ namespace NNIdec
         public EndianFormat ByteOrder { get; set; } = EndianFormat.CDAB;
 
         /// <summary>
+        /// Mengaktifkan fitur sambung ulang otomatis (Auto Reconnect).
+        /// Jika bernilai true (default), maka ketika koneksi jaringan ke PLC terputus,
+        /// library akan otomatis membuka koneksi kembali pada saat operasi baca/tulis berikutnya,
+        /// dan mengulang (retry) satu kali request yang gagal akibat koneksi putus.
+        /// Jika bernilai false, operasi baca/tulis akan langsung gagal saat koneksi terputus
+        /// dan pengguna wajib memanggil Connect() / ConnectAsync() secara manual.
+        /// </summary>
+        public bool AutoReconnect { get; set; } = true;
+
+        /// <summary>
         /// Model PLC IDEC yang sedang aktif (FC6A, MicroSmart, atau Micro).
         /// </summary>
         public abstract IdecPlcModel Model { get; }
@@ -79,11 +89,12 @@ namespace NNIdec
         /// <summary>
         /// Konstruktor dasar untuk inisialisasi parameter koneksi.
         /// </summary>
-        protected NNIdec(string ipAddress, int port = 502, byte stationId = 1)
+        protected NNIdec(string ipAddress, int port = 502, byte stationId = 1, bool autoReconnect = true)
         {
             IpAddress = ipAddress;
             Port = port;
             StationId = stationId;
+            AutoReconnect = autoReconnect;
         }
 
         #region Manajemen Koneksi
@@ -209,8 +220,16 @@ namespace NNIdec
         {
             lock (_syncLock)
             {
+                // Langkah 1: Pastikan koneksi tersedia sebelum mengirim request
                 if (!IsConnected)
                 {
+                    if (!AutoReconnect)
+                    {
+                        // Auto Reconnect nonaktif: langsung gagal, pengguna harus Connect() manual
+                        return IdecResult<byte[]>.Fail("Tidak terhubung ke PLC IDEC di " + IpAddress + ":" + Port + ". AutoReconnect nonaktif, silakan panggil Connect() terlebih dahulu.", -106);
+                    }
+
+                    // Auto Reconnect aktif: buka koneksi kembali secara otomatis
                     IdecResult connResult = Connect();
                     if (!connResult.IsSuccess)
                     {
@@ -218,41 +237,102 @@ namespace NNIdec
                     }
                 }
 
-                try
+                // Langkah 2: Kirim request untuk pertama kali
+                IdecResult<byte[]> firstResult = TransmitOnce(request);
+                if (firstResult.IsSuccess)
                 {
-                    if (_networkStream == null)
-                    {
-                        return IdecResult<byte[]>.Fail("NetworkStream belum terinisialisasi.", -103);
-                    }
-
-                    // Bersihkan sisa data lama di buffer masuk jika ada
-                    while (_networkStream.DataAvailable)
-                    {
-                        _networkStream.ReadByte();
-                    }
-
-                    // Kirim request ke PLC
-                    _networkStream.Write(request, 0, request.Length);
-                    _networkStream.Flush();
-
-                    // Baca respon dari PLC
-                    byte[] buffer = new byte[2048];
-                    int bytesRead = _networkStream.Read(buffer, 0, buffer.Length);
-
-                    if (bytesRead <= 0)
-                    {
-                        return IdecResult<byte[]>.Fail("Koneksi terputus saat membaca respon dari PLC IDEC.", -104);
-                    }
-
-                    byte[] response = new byte[bytesRead];
-                    Array.Copy(buffer, 0, response, 0, bytesRead);
-                    return IdecResult<byte[]>.Ok(response);
+                    return firstResult;
                 }
-                catch (Exception ex)
+
+                // Langkah 3: Jika gagal bukan karena koneksi putus, atau AutoReconnect nonaktif, kembalikan hasil apa adanya
+                if (!AutoReconnect)
                 {
+                    return firstResult;
+                }
+                if (!IsConnectionLostError(firstResult.ErrorCode))
+                {
+                    return firstResult;
+                }
+
+                // Langkah 4: Koneksi terputus -> sambung ulang lalu ulangi request satu kali
+                IdecResult reconnectResult = Connect();
+                if (!reconnectResult.IsSuccess)
+                {
+                    return IdecResult<byte[]>.Fail("Koneksi ke PLC IDEC terputus dan gagal tersambung ulang: " + reconnectResult.Message, reconnectResult.ErrorCode);
+                }
+
+                return TransmitOnce(request);
+            }
+        }
+
+        /// <summary>
+        /// Menentukan apakah kode error menandakan koneksi jaringan terputus / timeout,
+        /// sehingga layak dilakukan sambung ulang (reconnect) dan pengulangan request.
+        /// </summary>
+        private static bool IsConnectionLostError(int errorCode)
+        {
+            // -101: Timeout, -103: Stream belum siap, -104: Koneksi ditutup remote, -105: Error transmisi socket
+            if (errorCode == -101)
+            {
+                return true;
+            }
+            if (errorCode == -103)
+            {
+                return true;
+            }
+            if (errorCode == -104)
+            {
+                return true;
+            }
+            if (errorCode == -105)
+            {
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Mengirim satu kali request ke PLC dan membaca respon (tanpa logika reconnect) secara synchronous.
+        /// Wajib dipanggil di dalam lock _syncLock.
+        /// </summary>
+        private IdecResult<byte[]> TransmitOnce(byte[] request)
+        {
+            try
+            {
+                if (_networkStream == null)
+                {
+                    return IdecResult<byte[]>.Fail("NetworkStream belum terinisialisasi.", -103);
+                }
+
+                // Bersihkan sisa data lama di buffer masuk jika ada
+                while (_networkStream.DataAvailable)
+                {
+                    _networkStream.ReadByte();
+                }
+
+                // Kirim request ke PLC
+                _networkStream.Write(request, 0, request.Length);
+                _networkStream.Flush();
+
+                // Baca respon dari PLC
+                byte[] buffer = new byte[2048];
+                int bytesRead = _networkStream.Read(buffer, 0, buffer.Length);
+
+                if (bytesRead <= 0)
+                {
+                    // Socket ditutup oleh remote -> tandai koneksi sebagai terputus
                     Disconnect();
-                    return IdecResult<byte[]>.Fail("Terjadi kesalahan transmisi data dengan PLC IDEC: " + ex.Message, -105);
+                    return IdecResult<byte[]>.Fail("Koneksi terputus saat membaca respon dari PLC IDEC.", -104);
                 }
+
+                byte[] response = new byte[bytesRead];
+                Array.Copy(buffer, 0, response, 0, bytesRead);
+                return IdecResult<byte[]>.Ok(response);
+            }
+            catch (Exception ex)
+            {
+                Disconnect();
+                return IdecResult<byte[]>.Fail("Terjadi kesalahan transmisi data dengan PLC IDEC: " + ex.Message, -105);
             }
         }
 
@@ -261,8 +341,16 @@ namespace NNIdec
         /// </summary>
         protected virtual async Task<IdecResult<byte[]>> SendAndReceiveAsync(byte[] request)
         {
+            // Langkah 1: Pastikan koneksi tersedia sebelum mengirim request
             if (!IsConnected)
             {
+                if (!AutoReconnect)
+                {
+                    // Auto Reconnect nonaktif: langsung gagal, pengguna harus ConnectAsync() manual
+                    return IdecResult<byte[]>.Fail("Tidak terhubung ke PLC IDEC di " + IpAddress + ":" + Port + ". AutoReconnect nonaktif, silakan panggil ConnectAsync() terlebih dahulu.", -106);
+                }
+
+                // Auto Reconnect aktif: buka koneksi kembali secara otomatis
                 IdecResult connResult = await ConnectAsync().ConfigureAwait(false);
                 if (!connResult.IsSuccess)
                 {
@@ -270,6 +358,38 @@ namespace NNIdec
                 }
             }
 
+            // Langkah 2: Kirim request untuk pertama kali
+            IdecResult<byte[]> firstResult = await TransmitOnceAsync(request).ConfigureAwait(false);
+            if (firstResult.IsSuccess)
+            {
+                return firstResult;
+            }
+
+            // Langkah 3: Jika gagal bukan karena koneksi putus, atau AutoReconnect nonaktif, kembalikan hasil apa adanya
+            if (!AutoReconnect)
+            {
+                return firstResult;
+            }
+            if (!IsConnectionLostError(firstResult.ErrorCode))
+            {
+                return firstResult;
+            }
+
+            // Langkah 4: Koneksi terputus -> sambung ulang lalu ulangi request satu kali
+            IdecResult reconnectResult = await ConnectAsync().ConfigureAwait(false);
+            if (!reconnectResult.IsSuccess)
+            {
+                return IdecResult<byte[]>.Fail("Koneksi ke PLC IDEC terputus dan gagal tersambung ulang: " + reconnectResult.Message, reconnectResult.ErrorCode);
+            }
+
+            return await TransmitOnceAsync(request).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Mengirim satu kali request ke PLC dan membaca respon (tanpa logika reconnect) secara asynchronous.
+        /// </summary>
+        private async Task<IdecResult<byte[]>> TransmitOnceAsync(byte[] request)
+        {
             try
             {
                 NetworkStream? stream;

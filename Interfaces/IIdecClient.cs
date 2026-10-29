@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Threading.Tasks;
 using NNIdec.Core;
 
@@ -24,6 +24,11 @@ namespace NNIdec.Interfaces
         /// Status koneksi saat ini ke PLC IDEC.
         /// </summary>
         bool IsConnected { get; }
+
+        /// <summary>
+        /// Mengaktifkan sambung ulang otomatis saat koneksi jaringan ke PLC terputus (Default true).
+        /// </summary>
+        bool AutoReconnect { get; set; }
 
         /// <summary>
         /// Membuka koneksi ke PLC secara synchronous.
